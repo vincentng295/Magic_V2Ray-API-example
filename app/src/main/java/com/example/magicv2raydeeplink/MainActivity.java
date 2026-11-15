@@ -22,12 +22,14 @@ import android.widget.Toast;
 public class MainActivity extends Activity {
 
     private static final String NODE_URI = "socks://127.0.0.1:" + Socks5Service.PORT;
-    private static final String NODE_NAME = "DNS rewrite example";
+    private static final String NODE_NAME = Socks5Service.SESSION_NAME;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView state;
     private TextView log;
     private ScrollView scroll;
+    /** What Magic V2Ray said about itself (version, API level, state); null until the first answer arrives. */
+    private volatile MagicV2Ray.Info magic;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -63,6 +65,7 @@ public class MainActivity extends Activity {
         super.onResume();
         Socks5Service.onChange = () -> ui.post(this::render);
         render();
+        refreshMagicInfo();
     }
 
     @Override
@@ -74,15 +77,33 @@ public class MainActivity extends Activity {
     private void render() {
         state.setText((Socks5Service.listening ? "● SOCKS5 on 127.0.0.1:" + Socks5Service.PORT : "○ proxy stopped")
                 + "\nDNS (port 53) → " + Socks5Server.DNS_TARGET
-                + "\nOverrides: Hijack DNS off · port 53 → proxy · else direct");
+                + "\nOverrides: Hijack DNS off · port 53 → proxy · else direct"
+                + "\n" + (magic == null ? "Magic V2Ray: checking..." : magic.summary()));
         log.setText(Socks5Service.logText());
         scroll.post(() -> scroll.fullScroll(ScrollView.FOCUS_DOWN));
+    }
+
+    /**
+     * Asks Magic V2Ray who it is (MagicV2Ray.info). The call can take a moment (root mode asks the root service),
+     * so it runs on its own thread and the result is shown when it arrives.
+     */
+    private void refreshMagicInfo() {
+        new Thread(() -> {
+            magic = MagicV2Ray.info(getApplicationContext());
+            ui.post(this::render);
+        }, "magic-info").start();
     }
 
     private void startAndConnect(final boolean deepLink) {
         if (!MagicV2Ray.available(this)) {
             Toast.makeText(this, "Magic V2Ray with the connect API is not installed", Toast.LENGTH_LONG).show();
             return;
+        }
+        // Old Magic V2Ray (API level 0) still connects, but cannot tell us when it disconnects:
+        // the proxy then keeps running until the user taps "Disconnect + stop proxy".
+        MagicV2Ray.Info m = magic;
+        if (m != null && !m.has(MagicV2Ray.FEATURE_STATE_EVENTS)) {
+            Toast.makeText(this, "This Magic V2Ray cannot report disconnects: stop the proxy by hand", Toast.LENGTH_LONG).show();
         }
         Socks5Service.start(this);
         // Connect only once the port is really open, or Magic V2Ray would start against a dead proxy.

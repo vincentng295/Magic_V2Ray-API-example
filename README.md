@@ -67,13 +67,37 @@ is a dependency-free SOCKS5 server (CONNECT + UDP ASSOCIATE).
 Disconnecting is `com.huskydg.magicv2ray.action.DISCONNECT` or `magicv2ray://disconnect`. The app sends it
 *before* stopping the proxy, because stopping the proxy first would cut your connection.
 
+## Knowing when Magic V2Ray disconnects
+
+The proxy is only useful while Magic V2Ray routes through it. Magic V2Ray can end the connection without this app doing
+anything (the user taps Disconnect there or in the Quick Settings tile, the engine crashes, ...), so the app uses the
+**info / state-event API** (Magic V2Ray API level 1):
+
+1. **Info**: `MagicV2Ray.info()` asks the read-only provider `content://com.huskydg.magicv2ray.api` (`getInfo`) for the
+   version, the API level, the supported features and the current state. The main screen shows it, and the app warns
+   when `state_events` is missing (an older Magic V2Ray still connects but cannot say when it disconnects).
+2. **State events**: while the proxy runs, `Socks5Service` holds a listener (`MagicV2Ray.listen()`) for the broadcast
+   `com.huskydg.magicv2ray.event.STATE_CHANGED`. When it reports `connected = false` after this app's session was up,
+   the service stops the proxy by itself. The session is recognised by the caller package (explicit intent) or by the
+   session name (deep link, caller unknown).
+
+```
+ Magic V2Ray ── STATE_CHANGED (connected=false, reason=session_ended) ──► Socks5Service ──► stops the proxy
+```
+
+Both calls need `<queries><package android:name="com.huskydg.magicv2ray"/></queries>` (already in the manifest), must not
+run on the main thread (`info`, `state`), and the events can arrive twice (`listen()` drops the copy). If Magic V2Ray
+itself is killed in non-root mode nothing can be sent: call `MagicV2Ray.state()` when that matters. The full description
+of every call, extra and rule is the comment at the top of [`MagicV2Ray.java`](app/src/main/java/com/example/magicv2raydeeplink/MagicV2Ray.java),
+written so that another developer, or an AI assistant, can reuse the client in a different app.
+
 ## Usage
 
-1. Install Magic V2Ray (a version with the connect API) and this app.
+1. Install Magic V2Ray (a version with the connect API; API level 1 for info and disconnect events) and this app.
 2. Open this app and tap **Start proxy + connect (intent)**.
 3. Confirm in Magic V2Ray. The dialog lists the overrides (*Traffic settings: 1*, *Routing rules: 3*). DNS lines such
    as `DNS/udp  1.1.1.1:53  ->  9.9.9.9:53` appear in the log.
-4. Tap **Disconnect + stop proxy** when you are done.
+4. Tap **Disconnect + stop proxy** when you are done. If you disconnect inside Magic V2Ray instead, the proxy stops by itself.
 
 ### Things to know
 
@@ -108,11 +132,11 @@ the APK is signed with the debug key.
 
 | File | What it does |
 |---|---|
-| `MagicV2Ray.java` | Connect (with `overrides`) / disconnect through an intent or a deep link |
+| `MagicV2Ray.java` | The whole client of the API: connect (with `overrides`) / disconnect, info, state, state-event listener; documented for reuse |
 | `DnsOverrides.java` | The `overrides` JSON: Hijack DNS off, port 53 → proxy, else direct; no Android dependency |
 | `Socks5Server.java` | SOCKS5 (CONNECT + UDP ASSOCIATE), port 53 → `9.9.9.9`; no Android dependency |
-| `Socks5Service.java` | Foreground service that keeps the server alive and buffers the log |
-| `MainActivity.java` | Starts the server, waits for the port to open, then calls Magic V2Ray with the overrides |
+| `Socks5Service.java` | Foreground service that keeps the server alive, buffers the log and stops itself when Magic V2Ray disconnects |
+| `MainActivity.java` | Shows Magic V2Ray's info, starts the server, waits for the port to open, then calls Magic V2Ray with the overrides |
 | `tests/Socks5ServerTest.java` | Host-side tests of the proxy, run by `./build.sh --test` and by CI |
 | `tests/DnsOverridesTest.java` | Host-side check of the overrides JSON (balanced, rule order, allowed tags) |
 
