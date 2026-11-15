@@ -46,6 +46,9 @@ run_tests() {
     echo "==> host tests"
     javac -Xlint:all -d "$tmp" "$pkg/Socks5Server.java" tests/Socks5ServerTest.java
     java -cp "$tmp" com.example.magicv2raydeeplink.Socks5ServerTest
+    # DnsOverrides is plain text too (no Android dependency): checks the overrides sent to Magic V2Ray.
+    javac -Xlint:all -d "$tmp" "$pkg/DnsOverrides.java" tests/DnsOverridesTest.java
+    java -cp "$tmp" com.example.magicv2raydeeplink.DnsOverridesTest
     rm -rf "$tmp"
 }
 

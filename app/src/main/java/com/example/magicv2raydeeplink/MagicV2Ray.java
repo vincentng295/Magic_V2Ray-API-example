@@ -4,6 +4,9 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
+import android.util.Base64;
+
+import java.nio.charset.StandardCharsets;
 
 /**
  * Talks to Magic V2Ray. Two ways, same result: Magic V2Ray shows a confirmation (who asks, the full uri,
@@ -12,6 +15,10 @@ import android.net.Uri;
  *  - explicit intent (connectByIntent): Android tells Magic V2Ray which app asked, so the user can choose
  *    "Always trust this app" and later connects need no prompt;
  *  - deep link (connectByLink): works for websites too, but is always confirmed.
+ *
+ * Both also carry {@link DnsOverrides#JSON} as the {@code overrides} parameter: while connected, Hijack DNS is off
+ * and the routing rules are replaced by "port 53 -> proxy, everything else direct". A request with overrides is
+ * always confirmed, even for an app marked "Always trust", and the dialog lists what is changed.
  */
 final class MagicV2Ray {
 
@@ -35,7 +42,9 @@ final class MagicV2Ray {
                 .putExtra("name", name)
                 // This app serves the SOCKS5 port and reaches the internet through the device: it must stay
                 // OUT of the VPN, or its own traffic would loop back into itself.
-                .putExtra("exclude", new String[]{a.getPackageName()});
+                .putExtra("exclude", new String[]{a.getPackageName()})
+                // Intent / broadcast: the extra is the JSON text itself.
+                .putExtra("overrides", DnsOverrides.JSON);
         return start(a, i);
     }
 
@@ -44,6 +53,10 @@ final class MagicV2Ray {
                 .appendQueryParameter("uri", uri)             // appendQueryParameter URL-encodes the value
                 .appendQueryParameter("name", name)
                 .appendQueryParameter("exclude", a.getPackageName())
+                // Deep link: base64url (no padding, no wrapping) of the JSON.
+                .appendQueryParameter("overrides", Base64.encodeToString(
+                        DnsOverrides.JSON.getBytes(StandardCharsets.UTF_8),
+                        Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING))
                 .build();
         return start(a, new Intent(Intent.ACTION_VIEW, link).setPackage(PKG));
     }

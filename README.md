@@ -2,13 +2,14 @@
 
 An example Android app for the **connect API of [Magic V2Ray](https://github.com/vincentng295/Magic_V2Ray)**.
 
-It runs a tiny local SOCKS5 proxy, asks Magic V2Ray to route the whole device through it, and rewrites every
+It runs a tiny local SOCKS5 proxy, asks Magic V2Ray to route **only the device's DNS** through it, and rewrites every
 DNS query on the way: **anything sent to port 53 goes to `9.9.9.9`** (Quad9), whatever the app originally asked.
+To do that it uses the connect API's temporary **`overrides`**: Hijack DNS off, and the routing rules replaced by
+*all port 53 → proxy, everything else direct*.
 
 ```
- any app ──► Magic V2Ray (VPN) ──► socks://127.0.0.1:5353 ──► magic-dns-rewrite ──► internet
-                                                   port 53 ─► 9.9.9.9:53
-                                                   the rest ─► unchanged
+ any app ─ DNS (port 53) ─► Magic V2Ray (VPN) ──► socks://127.0.0.1:5353 ──► magic-dns-rewrite ──► 9.9.9.9:53
+         └ everything else ► Magic V2Ray (VPN) ──► direct (never touches this app)
 ```
 
 It is deliberately small, so you can copy the parts you need: [`MagicV2Ray.java`](app/src/main/java/com/example/magicv2raydeeplink/MagicV2Ray.java)
@@ -25,15 +26,43 @@ is a dependency-free SOCKS5 server (CONNECT + UDP ASSOCIATE).
    package in `exclude` so its outgoing traffic stays *outside* the VPN. Without that, the proxy's own sockets would be
    captured by the tunnel and loop straight back into it.
 3. Magic V2Ray shows a confirmation (who asks, the full URI, the apps kept out of the VPN). After you accept, the
-   connection lasts until it is disconnected; your own nodes are never changed, and disconnecting brings your
-   previous node back.
+   connection lasts until it is disconnected; your own nodes and settings are never changed, and disconnecting brings
+   your previous node and settings back.
+4. **Overrides**: the same request carries `overrides` (see below), so Magic V2Ray applies them to a *copy* of your
+   settings for the length of the session. They are never saved.
+
+### The overrides it sends
+
+```json
+{
+  "traffic": { "hijackDns": false },
+  "routing": {
+    "mode": "replace",
+    "rules": [
+      { "remarks": "DNS (port 53) -> proxy", "port": "53",            "outboundTag": "proxy"  },
+      { "remarks": "else direct (ip)",       "ip": "0.0.0.0/0,::/0",  "outboundTag": "direct" },
+      { "remarks": "else direct (domain)",   "domain": "regexp:.+",    "outboundTag": "direct" }
+    ]
+  }
+}
+```
+
+- **`traffic.hijackDns = false`**: the device's DNS queries are no longer answered by Xray's own DNS module, so they
+  all travel as ordinary port-53 traffic and reach this proxy. (Before, you had to switch Hijack DNS off by hand.)
+- **`routing` in mode `replace`**: your own rules are dropped for the session, then *port 53 → `proxy`* (the node
+  `socks://127.0.0.1:5353`) and *everything else → `direct`*. "Else" takes two rules because Magic V2Ray drops a rule
+  with no match condition (a bare catch-all), and an `ip` rule never matches a destination that still has a domain name.
+  Without them the unmatched traffic would fall back to Magic V2Ray's default, which is `proxy`.
+- Only whitelisted keys are accepted and `outboundTag` must be `proxy`, `direct` or `block`
+  (`ExternalSession.sanitizeOverrides` in Magic V2Ray). The text lives in [`DnsOverrides.java`](app/src/main/java/com/example/magicv2raydeeplink/DnsOverrides.java).
+- Intent: the extra `overrides` is the JSON text. Deep link: `overrides=<base64url of the JSON, no padding>`.
 
 ### Two ways to call Magic V2Ray
 
 | Button | Call | Notes |
 |---|---|---|
-| Connect (intent) | `startActivity` with action `com.huskydg.magicv2ray.action.CONNECT` and extras `uri`, `name`, `exclude` | Android tells Magic V2Ray which app called, so you can tick **Always trust this app**; later connects need no prompt |
-| Connect (deep link) | `magicv2ray://connect?uri=<urlencoded>&name=<name>&exclude=<package>` | Works for websites too, but is always confirmed (a link can come from anywhere) |
+| Connect (intent) | `startActivity` with action `com.huskydg.magicv2ray.action.CONNECT` and extras `uri`, `name`, `exclude`, `overrides` | Android tells Magic V2Ray which app called it. A request **with overrides is always confirmed**, even for an app marked *Always trust* |
+| Connect (deep link) | `magicv2ray://connect?uri=<urlencoded>&name=<name>&exclude=<package>&overrides=<base64url>` | Works for websites too, but is always confirmed (a link can come from anywhere) |
 
 Disconnecting is `com.huskydg.magicv2ray.action.DISCONNECT` or `magicv2ray://disconnect`. The app sends it
 *before* stopping the proxy, because stopping the proxy first would cut your connection.
@@ -42,14 +71,17 @@ Disconnecting is `com.huskydg.magicv2ray.action.DISCONNECT` or `magicv2ray://dis
 
 1. Install Magic V2Ray (a version with the connect API) and this app.
 2. Open this app and tap **Start proxy + connect (intent)**.
-3. Confirm in Magic V2Ray. DNS lines such as `DNS/udp  1.1.1.1:53  ->  9.9.9.9:53` appear in the log.
+3. Confirm in Magic V2Ray. The dialog lists the overrides (*Traffic settings: 1*, *Routing rules: 3*). DNS lines such
+   as `DNS/udp  1.1.1.1:53  ->  9.9.9.9:53` appear in the log.
 4. Tap **Disconnect + stop proxy** when you are done.
 
 ### Things to know
 
-- **Hijack DNS.** Magic V2Ray has *Traffic settings → DNS → Hijack DNS*, on by default: the device's DNS queries are
-  then answered by Xray's own DNS module, and only Xray's upstream lookups reach this proxy. To send **every**
-  query through the app (and have it rewritten), turn Hijack DNS off.
+- **A Magic V2Ray with `overrides`.** An older build ignores the extra and connects with its own settings (Hijack DNS
+  on, your rules): the proxy then only sees Xray's upstream lookups, not every query. Update Magic V2Ray.
+- **Non-DNS traffic bypasses the proxy.** Because of the routing override, only port 53 reaches this app. Everything
+  else leaves the VPN as `direct`, so your own node and rules are not used while this session runs.
+- **Professional mode** in Magic V2Ray owns the hand-written config, so it refuses a session with overrides.
 - **Only port 53.** DNS over TLS (853) and over HTTPS (443) are not touched.
 - **No authentication**, but the server only listens on loopback.
 - **UDP limits.** Fragmented datagrams (`FRAG != 0`) are dropped. A UDP flow closes after 60 s of silence, at most 256 at a time.
@@ -58,7 +90,7 @@ Disconnecting is `com.huskydg.magicv2ray.action.DISCONNECT` or `magicv2ray://dis
 ## Build
 
 ```sh
-./build.sh --test    # host tests of the SOCKS5 server: needs a JDK only
+./build.sh --test    # host tests (SOCKS5 server, overrides JSON): needs a JDK only
 ./build.sh           # tests + release APK in dist/ (needs the Android SDK and Gradle 8.7+, or ./gradlew)
 ./build.sh --debug   # debug APK
 ```
@@ -76,11 +108,13 @@ the APK is signed with the debug key.
 
 | File | What it does |
 |---|---|
-| `MagicV2Ray.java` | Connect / disconnect through an intent or a deep link |
+| `MagicV2Ray.java` | Connect (with `overrides`) / disconnect through an intent or a deep link |
+| `DnsOverrides.java` | The `overrides` JSON: Hijack DNS off, port 53 → proxy, else direct; no Android dependency |
 | `Socks5Server.java` | SOCKS5 (CONNECT + UDP ASSOCIATE), port 53 → `9.9.9.9`; no Android dependency |
 | `Socks5Service.java` | Foreground service that keeps the server alive and buffers the log |
-| `MainActivity.java` | Starts the server, waits for the port to open, then calls Magic V2Ray |
-| `tests/Socks5ServerTest.java` | Host-side tests, run by `./build.sh --test` and by CI |
+| `MainActivity.java` | Starts the server, waits for the port to open, then calls Magic V2Ray with the overrides |
+| `tests/Socks5ServerTest.java` | Host-side tests of the proxy, run by `./build.sh --test` and by CI |
+| `tests/DnsOverridesTest.java` | Host-side check of the overrides JSON (balanced, rule order, allowed tags) |
 
 ## License
 

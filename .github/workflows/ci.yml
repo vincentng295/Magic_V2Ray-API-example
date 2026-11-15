@@ -21,7 +21,7 @@ jobs:
         run: shellcheck --severity=warning build.sh
 
   test:
-    name: Host tests (SOCKS5 server)
+    name: Host tests (SOCKS5 server, overrides)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

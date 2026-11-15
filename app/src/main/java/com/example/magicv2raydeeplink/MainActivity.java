@@ -16,7 +16,8 @@ import android.widget.Toast;
 
 /**
  * 1. starts a local SOCKS5 server on 127.0.0.1:5353 (it rewrites every port-53 destination to 9.9.9.9),
- * 2. asks Magic V2Ray to route the device through it: socks://127.0.0.1:5353, keeping this app out of the VPN.
+ * 2. asks Magic V2Ray to route the device through it: socks://127.0.0.1:5353, keeping this app out of the VPN,
+ *    with temporary overrides (see DnsOverrides): Hijack DNS off, and routing "port 53 -> proxy, else direct".
  */
 public class MainActivity extends Activity {
 
@@ -72,7 +73,8 @@ public class MainActivity extends Activity {
 
     private void render() {
         state.setText((Socks5Service.listening ? "● SOCKS5 on 127.0.0.1:" + Socks5Service.PORT : "○ proxy stopped")
-                + "\nDNS (port 53) → " + Socks5Server.DNS_TARGET);
+                + "\nDNS (port 53) → " + Socks5Server.DNS_TARGET
+                + "\nOverrides: Hijack DNS off · port 53 → proxy · else direct");
         log.setText(Socks5Service.logText());
         scroll.post(() -> scroll.fullScroll(ScrollView.FOCUS_DOWN));
     }
