@@ -57,6 +57,8 @@ is a dependency-free SOCKS5 server (CONNECT + UDP ASSOCIATE).
   (`ExternalSession.sanitizeOverrides` in Magic V2Ray). The text lives in [`DnsOverrides.java`](app/src/main/java/com/example/magicv2raydeeplink/DnsOverrides.java).
 - Intent: the extra `overrides` is the JSON text. Deep link: `overrides=<base64url of the JSON, no padding>`.
 
+See full details of the API in [overrides_api.md](./overrides_api.md) file.
+
 ### Two ways to call Magic V2Ray
 
 | Button | Call | Notes |
