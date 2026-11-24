@@ -1,12 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- No permission needed: the app only talks to Magic V2Ray (no local proxy, no network of its own). -->
 
-    <!-- Android 11+ package visibility: lets us see and start Magic V2Ray. -->
+    <!-- Android 11+ package visibility: lets us see, start and query Magic V2Ray. -->
     <queries>
         <package android:name="com.huskydg.magicv2ray" />
         <intent>
@@ -27,14 +24,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <service
-            android:name=".Socks5Service"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="local SOCKS5 proxy that rewrites DNS" />
-        </service>
     </application>
 </manifest>

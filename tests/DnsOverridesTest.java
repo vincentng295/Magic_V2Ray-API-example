@@ -1,12 +1,9 @@
 package com.example.magicv2raydeeplink;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 /**
- * Host-side check of DnsOverrides (plain JDK, no JSON library): the text must be well-formed JSON and carry exactly
- * what Magic V2Ray's whitelist accepts: traffic.hijackDns = false and routing in mode replace with
- * "port 53 -> proxy", then "else direct" for IPs and for domains, in that order.
+ * Host-side check of DnsOverrides (plain JDK, no JSON library): well-formed JSON carrying exactly what Magic V2Ray's
+ * whitelist accepts: traffic.hijackDns = true and traffic.foreignDns = the Quad9 DoH server, and nothing else
+ * (no routing, no hosts: the user's own rules stay in force).
  */
 public class DnsOverridesTest {
 
@@ -41,29 +38,11 @@ public class DnsOverridesTest {
     public static void main(String[] args) {
         String j = DnsOverrides.JSON;
         check(balanced(j), "JSON is balanced");
-        check(j.contains("\"traffic\":{\"hijackDns\":false}"), "Hijack DNS is turned off");
-        check(j.contains("\"mode\":\"replace\""), "routing mode is replace");
-
-        // The rules, in order: the first match wins in Xray.
-        Matcher m = Pattern.compile("\\{\"remarks\":\"[^\"]*\"[^{}]*\\}").matcher(j.substring(j.indexOf("\"rules\"")));
-        String[] rules = new String[3];
-        int n = 0;
-        while (m.find() && n < 4) {
-            if (n < 3) rules[n] = m.group();
-            n++;
-        }
-        check(n == 3, "exactly three routing rules");
-        if (n == 3) {
-            check(rules[0].contains("\"port\":\"53\"") && rules[0].contains("\"outboundTag\":\"proxy\""),
-                    "rule 1: port 53 -> proxy");
-            check(rules[1].contains("\"ip\":\"0.0.0.0/0,::/0\"") && rules[1].contains("\"outboundTag\":\"direct\""),
-                    "rule 2: any ip -> direct");
-            check(rules[2].contains("\"domain\":\"regexp:.+\"") && rules[2].contains("\"outboundTag\":\"direct\""),
-                    "rule 3: any domain -> direct");
-            check(!rules[1].contains("\"port\"") && !rules[2].contains("\"port\""), "the catch-alls have no port condition");
-        }
-        // Magic V2Ray drops any outboundTag that is not one of these: a node or group name would silently vanish.
-        check(!Pattern.compile("\"outboundTag\":\"(?!proxy\"|direct\")").matcher(j).find(), "only proxy / direct tags");
+        check(j.contains("\"hijackDns\":true"), "Hijack DNS is turned on");
+        check(j.contains("\"foreignDns\":\"https://9.9.9.9/dns-query\""), "Proxy DNS is https://9.9.9.9/dns-query");
+        check(DnsOverrides.PROXY_DNS.length() <= 4000, "foreignDns is within Magic V2Ray's 4000 chars");
+        check(!j.contains("\"routing\""), "no routing override: the user's rules stay");
+        check(!j.contains("\"hosts\"") && !j.contains("\"network\"") && !j.contains("\"exclude\""), "no other section");
         check(j.length() < 256 * 1024, "far below Magic V2Ray's 256 KB limit");
 
         if (failures > 0) {

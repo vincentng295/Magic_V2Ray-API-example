@@ -37,16 +37,15 @@ VERSION=$(sed -n "s/^[[:space:]]*versionName[[:space:]]*'\(.*\)'.*/\1/p" app/bui
 NAME="magic-dns-rewrite"
 
 # --------------------------------------------------------------------------- host tests
-# Socks5Server has no Android dependency, so its behaviour (TCP / UDP relay, port-53 rewrite) is tested
-# with a plain javac + java run.
+# NodePicker and DnsOverrides have no Android dependency, so the node choice (connected node, else
+# freedom://localhost) and the overrides JSON are tested with a plain javac + java run.
 run_tests() {
     command -v javac >/dev/null || { echo "javac not found (JDK needed for the tests)" >&2; exit 1; }
     local pkg=app/src/main/java/com/example/magicv2raydeeplink
     local tmp; tmp=$(mktemp -d)
     echo "==> host tests"
-    javac -Xlint:all -d "$tmp" "$pkg/Socks5Server.java" tests/Socks5ServerTest.java
-    java -cp "$tmp" com.example.magicv2raydeeplink.Socks5ServerTest
-    # DnsOverrides is plain text too (no Android dependency): checks the overrides sent to Magic V2Ray.
+    javac -Xlint:all -d "$tmp" "$pkg/NodePicker.java" tests/NodePickerTest.java
+    java -cp "$tmp" com.example.magicv2raydeeplink.NodePickerTest
     javac -Xlint:all -d "$tmp" "$pkg/DnsOverrides.java" tests/DnsOverridesTest.java
     java -cp "$tmp" com.example.magicv2raydeeplink.DnsOverridesTest
     rm -rf "$tmp"

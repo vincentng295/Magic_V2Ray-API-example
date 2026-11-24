@@ -21,7 +21,7 @@ jobs:
         run: shellcheck --severity=warning build.sh
 
   test:
-    name: Host tests (SOCKS5 server, overrides)
+    name: Host tests (node choice, overrides)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,8 +31,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Socks5Server has no Android dependency: TCP / UDP relay and the port-53 rewrite are tested
-      # with plain javac + java, no emulator and no Android SDK.
+      # NodePicker and DnsOverrides have no Android dependency: tested with plain javac + java,
+      # no emulator and no Android SDK.
       - name: Run tests
         run: bash build.sh --test
 

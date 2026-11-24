@@ -1,9 +1,9 @@
 package com.example.magicv2raydeeplink;
 
-import android.Manifest;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Intent;
 import android.graphics.Typeface;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -14,27 +14,39 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+
 /**
- * 1. starts a local SOCKS5 server on 127.0.0.1:5353 (it rewrites every port-53 destination to 9.9.9.9),
- * 2. asks Magic V2Ray to route the device through it: socks://127.0.0.1:5353, keeping this app out of the VPN,
- *    with temporary overrides (see DnsOverrides): Hijack DNS off, and routing "port 53 -> proxy, else direct".
+ * Asks Magic V2Ray (API level 2) for a temporary session:
+ * <ol>
+ *   <li>node: the one Magic V2Ray is connected to right now ({@code getActiveNode}, used as {@code nodeid://<id>});
+ *       when nothing is connected, {@code freedom://localhost};</li>
+ *   <li>settings (see {@link DnsOverrides}): Hijack DNS on, Proxy DNS = https://9.9.9.9/dns-query.</li>
+ * </ol>
+ * No local proxy is involved: the app only talks to Magic V2Ray.
  */
 public class MainActivity extends Activity {
 
-    private static final String NODE_URI = "socks://127.0.0.1:" + Socks5Service.PORT;
-    private static final String NODE_NAME = Socks5Service.SESSION_NAME;
+    private static final String SESSION_NAME = "Magic DNS Rewrite";
+    private static final int REQ_NODE_ACCESS = 42;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private final StringBuilder logBuf = new StringBuilder();
     private TextView state;
     private TextView log;
     private ScrollView scroll;
+    private BroadcastReceiver stateReceiver;
     /** What Magic V2Ray said about itself (version, API level, state); null until the first answer arrives. */
     private volatile MagicV2Ray.Info magic;
+    /** The node this app asked for the last time (a nodeid:// or freedom://localhost), for the status text. */
+    private volatile String lastUri = "";
+    private boolean pendingDeepLink;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        if (Build.VERSION.SDK_INT >= 33) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -45,9 +57,9 @@ public class MainActivity extends Activity {
         state.setTextSize(16);
         root.addView(state);
 
-        root.addView(button("Start proxy + connect (intent)", () -> startAndConnect(false)));
-        root.addView(button("Start proxy + connect (deep link)", () -> startAndConnect(true)));
-        root.addView(button("Disconnect + stop proxy", this::disconnectAndStop));
+        root.addView(button("Connect (intent)", () -> connect(false, true)));
+        root.addView(button("Connect (deep link)", () -> connect(true, true)));
+        root.addView(button("Disconnect", this::disconnect));
 
         scroll = new ScrollView(this);
         log = new TextView(this);
@@ -61,26 +73,43 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        // Magic V2Ray can end the session without us (Disconnect in its app, the tile, a crash ...): it tells us here.
+        stateReceiver = MagicV2Ray.listen(this, e -> {
+            log("event: " + e);
+            refreshMagicInfo();
+        });
+    }
+
+    @Override
+    protected void onStop() {
+        MagicV2Ray.unlisten(this, stateReceiver);
+        stateReceiver = null;
+        super.onStop();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
-        Socks5Service.onChange = () -> ui.post(this::render);
         render();
         refreshMagicInfo();
     }
 
-    @Override
-    protected void onPause() {
-        Socks5Service.onChange = null;
-        super.onPause();
+    private void render() {
+        state.setText("Hijack DNS on · Proxy DNS " + DnsOverrides.PROXY_DNS
+                + "\nNode: " + (lastUri.isEmpty() ? "(chosen when you connect)" : lastUri)
+                + "\n" + (magic == null ? "Magic V2Ray: checking..." : magic.summary()));
+        log.setText(logBuf.toString());
+        scroll.post(() -> scroll.fullScroll(ScrollView.FOCUS_DOWN));
     }
 
-    private void render() {
-        state.setText((Socks5Service.listening ? "● SOCKS5 on 127.0.0.1:" + Socks5Service.PORT : "○ proxy stopped")
-                + "\nDNS (port 53) → " + Socks5Server.DNS_TARGET
-                + "\nOverrides: Hijack DNS off · port 53 → proxy · else direct"
-                + "\n" + (magic == null ? "Magic V2Ray: checking..." : magic.summary()));
-        log.setText(Socks5Service.logText());
-        scroll.post(() -> scroll.fullScroll(ScrollView.FOCUS_DOWN));
+    private void log(String line) {
+        final String s = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date()) + " " + line + "\n";
+        ui.post(() -> {
+            logBuf.append(s);
+            render();
+        });
     }
 
     /**
@@ -94,41 +123,69 @@ public class MainActivity extends Activity {
         }, "magic-info").start();
     }
 
-    private void startAndConnect(final boolean deepLink) {
+    /**
+     * Picks the node, then sends the connect request.
+     * @param allowAsk true the first time: if Magic V2Ray wants the user's permission to read nodes, ask for it once
+     */
+    private void connect(final boolean deepLink, final boolean allowAsk) {
         if (!MagicV2Ray.available(this)) {
             Toast.makeText(this, "Magic V2Ray with the connect API is not installed", Toast.LENGTH_LONG).show();
             return;
         }
-        // Old Magic V2Ray (API level 0) still connects, but cannot tell us when it disconnects:
-        // the proxy then keeps running until the user taps "Disconnect + stop proxy".
-        MagicV2Ray.Info m = magic;
-        if (m != null && !m.has(MagicV2Ray.FEATURE_STATE_EVENTS)) {
-            Toast.makeText(this, "This Magic V2Ray cannot report disconnects: stop the proxy by hand", Toast.LENGTH_LONG).show();
-        }
-        Socks5Service.start(this);
-        // Connect only once the port is really open, or Magic V2Ray would start against a dead proxy.
-        final long deadline = System.currentTimeMillis() + 3000;
-        ui.post(new Runnable() {
-            @Override
-            public void run() {
-                if (Socks5Service.listening) {
-                    boolean ok = deepLink
-                            ? MagicV2Ray.connectByLink(MainActivity.this, NODE_URI, NODE_NAME)
-                            : MagicV2Ray.connectByIntent(MainActivity.this, NODE_URI, NODE_NAME);
-                    if (!ok) Toast.makeText(MainActivity.this, "Could not open Magic V2Ray", Toast.LENGTH_LONG).show();
-                } else if (System.currentTimeMillis() < deadline) {
-                    ui.postDelayed(this, 100);
-                } else {
-                    Toast.makeText(MainActivity.this, "The proxy did not start, see the log", Toast.LENGTH_LONG).show();
+        pendingDeepLink = deepLink;
+        new Thread(() -> {
+            final MagicV2Ray.Info info = MagicV2Ray.info(getApplicationContext());
+            magic = info;
+            if (info.apiLevel < 2 || !info.has(MagicV2Ray.FEATURE_NODES)) {
+                log("Magic V2Ray is older than API level 2: cannot read the node in use");
+            } else {
+                MagicV2Ray.ActiveNode n = MagicV2Ray.activeNode(getApplicationContext());
+                if (n.ok()) {
+                    String uri = NodePicker.pick(n.connected, n.source, n.uri);
+                    log("active node: " + (n.connected ? n.source + " \"" + n.name + "\"" : "not connected") + " -> " + uri);
+                    ui.post(() -> send(deepLink, uri));
+                    return;
                 }
+                if (n.permissionRequired() && allowAsk) {
+                    log("Magic V2Ray asks you to allow this app to read your nodes");
+                    ui.post(() -> {
+                        if (!MagicV2Ray.requestNodeAccess(this, REQ_NODE_ACCESS)) connect(deepLink, false);
+                    });
+                    return;
+                }
+                log("cannot read the node in use (" + n.status + ")");
             }
-        });
+            // No permission / old Magic V2Ray: the public state still says whether the user's own node is connected.
+            String uri = NodePicker.fallback(info.stateKnown, info.connected, info.sessionActive);
+            log("fallback -> " + (uri == null ? "no uri (the selected node is kept)" : uri));
+            ui.post(() -> send(deepLink, uri));
+        }, "magic-connect").start();
     }
 
-    private void disconnectAndStop() {
-        // Order matters: leave the proxy running until Magic V2Ray has let go of it.
-        MagicV2Ray.disconnect(this);
-        ui.postDelayed(() -> Socks5Service.stop(this), 1500);
+    private void send(boolean deepLink, String uri) {
+        lastUri = uri == null ? "(the selected node)" : uri;
+        boolean ok = deepLink
+                ? MagicV2Ray.connectByLink(this, uri, SESSION_NAME)
+                : MagicV2Ray.connectByIntent(this, uri, SESSION_NAME);
+        if (!ok) Toast.makeText(this, "Could not open Magic V2Ray", Toast.LENGTH_LONG).show();
+        render();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_NODE_ACCESS) return;
+        boolean granted = resultCode == RESULT_OK && data != null && data.getBooleanExtra("granted", true);
+        log(granted ? "node access granted (" + (data == null ? "" : data.getStringExtra("level")) + ")" : "node access refused");
+        connect(pendingDeepLink, false);        // granted: reads the node; refused: falls back
+    }
+
+    private void disconnect() {
+        if (!MagicV2Ray.disconnect(this)) {
+            Toast.makeText(this, "Could not open Magic V2Ray", Toast.LENGTH_LONG).show();
+        }
+        lastUri = "";
+        render();
     }
 
     private Button button(String text, Runnable action) {

@@ -5,30 +5,24 @@ package com.example.magicv2raydeeplink;
  * They apply only while the session is connected and are never saved by Magic V2Ray.
  *
  * <pre>
- * traffic: hijackDns = false          the device's DNS queries are NOT answered by Xray's own DNS module, so
- *                                     every one of them travels as plain port-53 traffic and reaches this proxy
- * routing (mode replace):
- *   1. port 53            -> proxy    (socks://127.0.0.1:5353: this app rewrites it to 9.9.9.9)
- *   2. any IP             -> direct   (0.0.0.0/0, ::/0)
- *   3. any domain         -> direct   (destinations that still carry a name, e.g. sniffed ones)
+ * traffic.hijackDns  = true                            Xray answers every DNS query of the device itself
+ * traffic.foreignDns = "https://9.9.9.9/dns-query"     the "Proxy DNS" upstream: DNS over HTTPS to Quad9
  * </pre>
  *
- * "All 53 -> proxy, else direct" needs rules 2 and 3 because Magic V2Ray drops a rule that has no match condition
- * (a bare catch-all) and because an {@code ip} rule never matches a destination that is still a domain
- * ({@code domainStrategy} AsIs). Without them, everything not matched would fall to Magic V2Ray's default: proxy.
+ * Nothing else is overridden: the user's routing rules, hosts, exclude list and the other settings stay as they are,
+ * and no local proxy is needed any more (the old version rewrote port 53 through a SOCKS5 server).
  *
  * Plain JSON text on purpose: no Android dependency, so the host tests can check it.
- * Magic V2Ray accepts only whitelisted keys and {@code outboundTag} of proxy / direct / block; nothing else is needed.
+ * Magic V2Ray accepts only whitelisted keys of the right type ({@code foreignDns}: string, max 4000 chars,
+ * comma separated servers).
  */
 final class DnsOverrides {
 
+    /** The DNS server used as "Proxy DNS" for the session. */
+    static final String PROXY_DNS = "https://9.9.9.9/dns-query";
+
     static final String JSON = "{"
-            + "\"traffic\":{\"hijackDns\":false},"
-            + "\"routing\":{\"mode\":\"replace\",\"rules\":["
-            + "{\"remarks\":\"DNS (port 53) -> proxy\",\"port\":\"53\",\"outboundTag\":\"proxy\"},"
-            + "{\"remarks\":\"else direct (ip)\",\"ip\":\"0.0.0.0/0,::/0\",\"outboundTag\":\"direct\"},"
-            + "{\"remarks\":\"else direct (domain)\",\"domain\":\"regexp:.+\",\"outboundTag\":\"direct\"}"
-            + "]}"
+            + "\"traffic\":{\"hijackDns\":true,\"foreignDns\":\"" + PROXY_DNS + "\"}"
             + "}";
 
     private DnsOverrides() {

@@ -15,7 +15,7 @@ modified. Source of truth: `ExternalSession.java` (`sanitizeOverrides`) and `ext
 
 | Param / extra | Type | Notes |
 |---|---|---|
-| `uri` | string | Node URI (`vless://`, `trojan://`, `ss://`, ...). Max 8192 chars. **Optional when `overrides` is given**: the node the user selected keeps being used. |
+| `uri` | string | Node URI (`vless://`, `trojan://`, `ss://`, ...) or, from API level 2, `freedom://localhost`, `nodeid://<id>`, `chain://...` (see 1.1). Max 8192 chars. **Optional when `overrides` is given**: the node the user selected keeps being used. |
 | `name` | string | Display name (status bar, notification, tile). Max 60 chars, control chars stripped. Display only, never trusted. |
 | `exclude` | string (`a,b;c`) or `String[]` | Packages to keep out of the VPN **for this session** (e.g. the caller itself). Max 8, must look like a package name. Not the same as `overrides.exclude` (see 3.3). |
 | `overrides` | JSON string (intent) / base64url JSON (deep link) | Setting overrides, described below. Max 256 KB decoded. |
@@ -24,6 +24,34 @@ A request with neither a valid `uri` nor valid `overrides` is rejected.
 
 Deep link encoding: UTF-8 JSON → base64url, **no padding** (`URL_SAFE | NO_WRAP | NO_PADDING`).
 In an intent extra you may pass the raw JSON (string starting with `{`) instead.
+
+### 1.1 Special `uri` values and the node in use (API level 2, apps only)
+
+| `uri` | Meaning |
+|---|---|
+| `freedom://localhost` | the built-in "no proxy" node: Xray as a pure router, every routing rule still applies |
+| `nodeid://<id>` | one of the user's own nodes. Only for a verified app (explicit intent, never a link or broadcast) that the user allowed to read nodes (either level). |
+| `chain://localhost/?hopList=<urlencode(JSON array of node uris)>` | a proxy chain of 2 to 16 hops; hops may be `nodeid://` too |
+
+Which node is in use right now (needs the user's permission, apps only):
+
+```java
+Uri api = Uri.parse("content://com.huskydg.magicv2ray.api");
+Bundle b = getContentResolver().call(api, "getActiveNode", null, null);   // not on the main thread
+// status: ok | permission_required | unknown_caller | unavailable
+if ("permission_required".equals(b.getString("status"))) {
+    // MUST be startActivityForResult (that is how the caller is verified); RESULT_OK = granted
+    startActivityForResult(new Intent("com.huskydg.magicv2ray.action.REQUEST_NODE_ACCESS")
+            .setPackage("com.huskydg.magicv2ray"), 42);
+}
+// json = {connected, known, source, session?, node:{id, name, protocol, uri}}
+// source: "selected" (the user's pick) | "session" (an app set it) | "direct" (the no-proxy node)
+// node.uri: nodeid://<id> at the anonymous level (default), the real link at the full level,
+//           <scheme>://hidden for an app-set node an anonymous reader may not see
+```
+
+This example reuses the node in use by sending `node.uri` back as `uri`, and `freedom://localhost` when it is not
+connected (see `NodePicker.java`).
 
 ## 2. Full example
 
@@ -79,7 +107,7 @@ If the whole JSON is invalid / not decodable, all overrides are discarded.
 | `mtu` | integer 576–9000 |
 | `fragment_packets`, `fragment_length`, `fragment_interval` | string, max 32 |
 | `pinnedPeerCertSha256` | string, max 512 |
-| `foreignDns` | string, max 4000 (comma separated servers) |
+| `foreignDns` | string, max 4000 (comma separated servers). The "Proxy DNS" list, e.g. `https://9.9.9.9/dns-query` |
 | `directDns` | string, max 500 |
 | `directDnsDomains` | string, max 8000 |
 | `dnsDisableCache`, `dnsServeStale`, `dnsDisableFallback`, `dnsDisableFallbackIfMatch`, `dnsParallelQuery`, `dnsUseSystemHosts` | boolean |
